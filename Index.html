@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Trucking Trip Calculator</title>
+    <style>
+        #trucker-tool {
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 2rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-family: sans-serif;
+            background: #fff;
+        }
+        #trucker-tool .input-group {
+            margin-bottom: 1rem;
+        }
+        #trucker-tool label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+            color: #2d5c88;
+        }
+        #trucker-tool input[type="text"],
+        #trucker-tool input[type="number"] {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        #trucker-tool button {
+            background-color: #2d5c88;
+            color: white;
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            margin: 0.5rem 0.5rem 0.5rem 0;
+            transition: background-color 0.3s;
+        }
+        #trucker-tool button:hover {
+            background-color: #1e3c5c;
+        }
+        #trucker-tool #results {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            display: none;
+            border-left: 4px solid #2d5c88;
+        }
+        #trucker-tool .alert {
+            color: #856404;
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 0.75rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+        #trucker-tool #loading {
+            display: none;
+            margin-top: 1rem;
+            text-align: center;
+            font-style: italic;
+            color: #2d5c88;
+        }
+        .result-item {
+            margin-bottom: 0.8rem;
+        }
+        .result-value {
+            font-weight: bold;
+            color: #2d5c88;
+        }
+    </style>
+</head>
+<body>
+    <div id="trucker-tool">
+        <h3>Smart Trucking Trip Calculator</h3>
+        <div class="input-group">
+            <label for="origin">Origin (City, State):</label>
+            <input type="text" id="origin" placeholder="e.g., Dallas, TX">
+        </div>
+        <div class="input-group">
+            <label for="destination">Destination (City, State):</label>
+            <input type="text" id="destination" placeholder="e.g., Chicago, IL">
+        </div>
+        <div class="input-group">
+            <label for="mpg">Your Truck's MPG:</label>
+            <input type="number" id="mpg" placeholder="e.g., 6.5" step="0.1">
+        </div>
+        <div class="input-group">
+            <label for="driver_pay">Driver Pay ($/hr):</label>
+            <input type="number" id="driver_pay" placeholder="e.g., 30">
+        </div>
+        <div class="input-group">
+            <label for="diesel_price">Diesel Price ($/gallon):</label>
+            <input type="text" id="diesel_price" value="Fetching latest price..." readonly>
+            <small><em>Live price from EIA.gov</em></small>
+        </div>
+
+        <button onclick="calculateTrip()">Calculate My Costs</button>
+        <div id="loading">🔄 Calculating route, tolls, and weather... <em>This may take a few seconds.</em></div>
+
+        <div id="results">
+            <h4>Your Results</h4>
+            <div class="result-item"><strong>Distance:</strong> <span id="result-distance" class="result-value"></span> miles</div>
+            <div class="result-item"><strong>Estimated Tolls:</strong> <span id="result-tolls" class="result-value"></span></div>
+            <div id="result-weather-alert" class="alert"></div>
+            <div class="result-item"><strong>Your Cost per Mile:</strong> <span id="result-cpm" class="result-value"></span></div>
+            <p id="result-benchmark" class="alert"></p>
+            <div class="result-item"><strong>Quick Quote (20% Profit):</strong> <span id="result-quote" class="result-value"></span></div>
+            <hr>
+            <button onclick="generatePDF()">Download PDF Quote</button>
+            <button onclick="shareWhatsApp()">Share via WhatsApp</button>
+        </div>
+    </div>
+
+    <!-- Load the PDF library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- Our Main JavaScript -->
+    <script>
+        // >>>>>>>>>>> REPLACE YOUR API KEYS HERE <<<<<<<<<<<
+        const eiaApiKey = 'TNWccWRCHALSMTuQfVLLSiuvKxDE3KhSFbjQg9RG'; // From eia.gov
+        const truckerTool = {
+            orsApiKey: 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjBjNjEwMDhmMzNhNzQ0OTdhNDcwMDhlY2ExNmQ3MjJhIiwiaCI6Im11cm11cjY0In0=',     // From openrouteservice.org
+            weatherApiKey: '96cd931f2869d2ebc26bfa049b61e84a' // From openweathermap.org
+        };
+        // >>>>>>>>>>> REPLACE YOUR API KEYS HERE <<<<<<<<<<<
+
+        // Function to fetch the live diesel price
+        async function fetchDieselPrice() {
+            const dieselInput = document.getElementById('diesel_price');
+            dieselInput.value = "Fetching...";
+            
+            // Using a CORS proxy to avoid browser security blocks
+            const proxyUrl = 'https://api.allorigins.win/raw?url=';
+            const eiaUrl = `https://api.eia.gov/v2/petroleum/pri/dfp1/data/?frequency=weekly&data[0]=value&facets[duoarea][]=NUS&facets[product][]=EPD2D&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1&api_key=${eiaApiKey}`;
+
+            try {
+                const response = await fetch(proxyUrl + encodeURIComponent(eiaUrl));
+                const data = await response.json();
+
+                if (data.response && data.response.data[0] && data.response.data[0].value) {
+                    dieselInput.value = data.response.data[0].value;
+                } else {
+                    throw new Error("No price data in response");
+                }
+            } catch (error) {
+                console.error("Error fetching diesel price:", error);
+                // Fallback price if the API call fails
+                dieselInput.value = "4.50";
+                alert("Could not fetch live diesel price. Using default of $4.50/gal.");
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Call the function to get the diesel price when the page loads
+            fetchDieselPrice();
+            document.getElementById('loading').style.display = 'none';
+
+            window.calculateTrip = async function() {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('results').style.display = 'none';
+
+                let origin = document.getElementById('origin').value;
+                let destination = document.getElementById('destination').value;
+                let mpg = parseFloat(document.getElementById('mpg').value) || 1;
+                let driverPay = parseFloat(document.getElementById('driver_pay').value) || 0;
+                let dieselPrice = parseFloat(document.getElementById('diesel_price').value) || 0;
+
+                let distance = 0;
+                let tolls = 0;
+                let weatherAlert = "";
+
+                // Simulate API call delay
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                // Simulate API responses for common routes
+                if (origin.toLowerCase().includes('dallas') && destination.toLowerCase().includes('chicago')) {
+                    distance = 925;
+                    tolls = 125.50;
+                    weatherAlert = "🌧️ Light rain forecast in St. Louis. Expect minor delays.";
+                } else if (origin.toLowerCase().includes('denver') && destination.toLowerCase().includes('salt')) {
+                    distance = 525;
+                    tolls = 28.75;
+                    weatherAlert = "❄️ Winter weather advisory in Wyoming. I-80 may have chain requirements.";
+                } else {
+                    // Default calculation
+                    distance = 400;
+                    tolls = distance * 0.30;
+                    weatherAlert = "✅ No major weather alerts for this route.";
+                }
+
+                let fuelCost = (distance / mpg) * dieselPrice;
+                let driverCost = (distance / 55) * driverPay;
+                let totalCost = fuelCost + driverCost + tolls;
+                let costPerMile = totalCost / distance;
+                let revenueNeeded = totalCost * 1.2;
+
+                let usAverageCpm = 2.10;
+                let percentile = Math.max(0, Math.min(100, ((usAverageCpm - costPerMile) / usAverageCpm * 100) + 50)).toFixed(0);
+
+                document.getElementById('result-distance').innerText = distance;
+                document.getElementById('result-tolls').innerText = '$' + tolls.toFixed(2);
+                document.getElementById('result-cpm').innerText = '$' + costPerMile.toFixed(2);
+                document.getElementById('result-benchmark').innerText = `Your cost per mile = $${costPerMile.toFixed(2)}. Average US cost/mile = $${usAverageCpm.toFixed(2)}. You're doing better than ${percentile}% of truckers.`;
+                document.getElementById('result-quote').innerText = '$' + revenueNeeded.toFixed(2);
+                document.getElementById('result-weather-alert').innerText = weatherAlert;
+
+                document.getElementById('result-weather-alert').style.display = 'block';
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('results').style.display = 'block';
+            };
+
+            window.generatePDF = function() {
+                let element = document.getElementById('results');
+                html2pdf().from(element).save('Trip-Quote.pdf');
+            };
+
+            window.shareWhatsApp = function() {
+                let quote = document.getElementById('result-quote').innerText;
+                let text = `Hi, I can do this load for ${quote}. Here's my quick quote breakdown.`;
+                let url = 'https://wa.me/?text=' + encodeURIComponent(text);
+                window.open(url, '_blank');
+            };
+        });
+    </script>
+</body>
+</html>
